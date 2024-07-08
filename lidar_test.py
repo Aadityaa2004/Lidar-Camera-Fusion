@@ -5,7 +5,7 @@ import pyqtgraph as pg
 from pyrplidar import PyRPlidar
 from math import cos, sin, radians
 import cv2 as cv
-import time 
+import time
 import mediapipe as mp
 
 
@@ -54,31 +54,36 @@ class LidarThread(QtCore.QThread):
         self.stop_flag = True
         self.wait()
 
+
 class Plotting(pg.GraphicsLayoutWidget):
     def __init__(self, parent=None):
         pg.GraphicsLayoutWidget.__init__(self, parent=parent)
-        self.setWindowTitle('Real-time Lidar Points')
-        self.resize(800, 600)
-        self.plot = self.addPlot(title="Lidar Points")
-        self.plot.setAspectLocked(True)
-        self.plot.setXRange(-500, 500)
-        self.plot.setYRange(-500, 500)
-        self.plot_data = self.plot.plot([], [], pen=None, symbolBrush=(255, 0, 0), symbolSize=3, symbolPen=None)
+        self.setWindowTitle('Integrated Lidar and Camera Data')
+        self.resize(1600, 600)
+        
+        # LIDAR plot
+        self.lidar_plot = self.addPlot(title="Lidar Points")
+        self.lidar_plot.setAspectLocked(True)
+        self.lidar_plot.setXRange(-500, 500)
+        self.lidar_plot.setYRange(-500, 500)
+        self.plot_data = self.lidar_plot.plot([], [], pen=None, symbolBrush=(255, 0, 0), symbolSize=3, symbolPen=None)
         
         self.lines = []
         self.text_items = []
         for _ in range(12):
             line = pg.PlotDataItem([], [], pen=pg.mkPen(color=(0, 255, 0), width=2))
-            self.plot.addItem(line)
+            self.lidar_plot.addItem(line)
             self.lines.append(line)
             
             text_item = pg.TextItem('', anchor=(0.5, 1))
-            self.plot.addItem(text_item)
+            self.lidar_plot.addItem(text_item)
             self.text_items.append(text_item)
-        
-        self.lidar_thread = LidarThread(port="/dev/tty.usbserial-0001", baudrate=256000)
-        self.lidar_thread.new_data.connect(self.update_plot)
-        self.lidar_thread.start()
+
+        # Camera view
+        self.nextRow()
+        self.camera_view = self.addViewBox()
+        self.camera_image = pg.ImageItem()
+        self.camera_view.addItem(self.camera_image)
 
     def update_plot(self, x, y, distances, angles):
         self.plot_data.setData(x, y)
@@ -102,11 +107,14 @@ class Plotting(pg.GraphicsLayoutWidget):
             else:
                 self.lines[i].setData([], [])
                 self.text_items[i].setText('')
-                
+
+    def update_camera(self, frame):
+        self.camera_image.setImage(frame.swapaxes(0, 1))
 
     def closeEvent(self, event):
         self.lidar_thread.stop()
         event.accept()
+
 
 class handDetector():
     def __init__(self, mode=False, maxHands=2, detectionCon=0.7, trackCon=0.5):
@@ -124,9 +132,10 @@ class handDetector():
         )
         self.mpDraw = mp.solutions.drawing_utils
 
-    def findHands(self, frame, draw=True):
+    def findHands(self, frame, draw=True, return_position=False):
         imgRGB = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
         results = self.hands.process(imgRGB)
+        hand_position = None
         if results.multi_hand_landmarks:
             for handLms in results.multi_hand_landmarks:
                 if draw:
@@ -137,9 +146,13 @@ class handDetector():
                     cx, cy = int(lm.x * w), int(lm.y * h)
                     if id == 0:
                         cv.circle(frame, (cx, cy), 15, (255, 0, 255), cv.FILLED)
+                        hand_position = (cx, cy)
                         
-        return frame
-    
+        if return_position:
+            return frame, hand_position
+        else:
+            return frame
+
     def findPosition(self, img, handNo=0, draw=True):
         lmList = []
         if self.results.multi_hand_landmarks:
@@ -151,7 +164,7 @@ class handDetector():
                 if draw:
                     cv.circle(img, (cx, cy), 15, (255, 0, 255), cv.FILLED)
         return lmList
-    
+
 
 class Detection():
     def hand_detection(self):
@@ -200,14 +213,21 @@ def main():
     pg.setConfigOptions(antialias=True)
     lidar_widget = Plotting()
     lidar_widget.show()
+    
+    lidar_thread = LidarThread(port="/dev/tty.usbserial-0001", baudrate=256000)
+    lidar_thread.new_data.connect(lidar_widget.update_plot)
+    lidar_thread.start()
+
     detection = Detection()
-    detection.hand_detection()
+    
+    detection_thread = QtCore.QThread()
+    # detection.moveToThread(detection_thread)
+    detection_thread.started.connect(detection.hand_detection)
+    detection_thread.start()
+
     sys.exit(app.exec_())
     
 
 
 if __name__ == "__main__":
     main()
-
-
-# camera detecting the object and also LIDAR 
