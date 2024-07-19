@@ -33,6 +33,7 @@ class LidarThread(QtCore.QThread):
                 if self.stop_flag:
                     break
                 scan = next(scan_generator())
+                print(scan)
                 angle = scan.angle
                 distance = scan.distance / 10
                 if distance > 0:
