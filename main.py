@@ -2,9 +2,13 @@ import sys
 import cv2 as cv
 import numpy as np
 from math import cos, sin, radians
-from PySide6 import QtCore, QtWidgets, QtGui  # Added QtGui import
+from PySide6 import QtCore, QtWidgets, QtGui
 import pyqtgraph as pg
 from pyrplidar import PyRPlidar
+from ultralytics import YOLO 
+import cvzone
+import time 
+from sort import *
 
 class LidarThread(QtCore.QThread):
     new_data = QtCore.Signal(np.ndarray, np.ndarray, np.ndarray, np.ndarray)
@@ -26,29 +30,22 @@ class LidarThread(QtCore.QThread):
             y_coords = []
             angles = []
             distances = []
-            angles_and_distances = []
 
             for count, scan in enumerate(scan_generator()):
                 line = str(scan)
                 line = line.replace('{', ' ').replace('}', ' ').split(',')
                 angle = float(line[2].split(':')[1])
                 distance = float(line[3].split(':')[1]) / 10
-                # if angles < 60:
-                #     angles_and_distances.append(angle[count], distance[count])
-                # if angles > 300:
-                #     angles_and_distances.append(angle[count], distance[count])
-                if distance > 0: 
-                        if angle < 51 or angle > 309:
-                            x = distance * sin(radians(angle))
-                            y = distance * cos(radians(angle))
-                            x_coords.append(x)
-                            y_coords.append(y)
-                            angles.append(angle)
-                            distances.append(distance)
-            
+                if distance > 0:
+                    x = distance * sin(radians(angle))
+                    y = distance * cos(radians(angle))
+                    x_coords.append(x)
+                    y_coords.append(y)
+                    angles.append(angle)
+                    distances.append(distance)
 
-                if count >= 360:  # Emit data every 100 points
-                    self.new_data.emit(np.array(x_coords), np.array(y_coords), np.array(angles), np.array(distances))
+                if count >= 360:  # Emit data every 360 points
+                    self.new_data.emit(np.array(x_coords), np.array(y_coords), np.array(distances), np.array(angles))
                     x_coords = []
                     y_coords = []
                     break
@@ -56,9 +53,6 @@ class LidarThread(QtCore.QThread):
         self.lidar.stop()
         self.lidar.set_motor_pwm(0)
         self.lidar.disconnect()
-
-    def new_data_test(self):
-        print(self.new_data)
 
     def stop(self):
         self.stop_flag = True
@@ -73,6 +67,20 @@ class CameraThread(QtCore.QThread):
 
     def run(self):
         cap = cv.VideoCapture(0)
+
+        model = YOLO('/Users/aaditya/ALSTOM/Lidar/yolov8n.pt')
+        classNames = ["person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train", "truck", "boat",
+                "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat",
+                "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella",
+                "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball", "kite", "baseball bat",
+                "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup",
+                "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange", "broccoli",
+                "carrot", "hot dog", "pizza", "donut", "cake", "chair", "sofa", "pottedplant", "bed",
+                "diningtable", "toilet", "tvmonitor", "laptop", "mouse", "remote", "keyboard", "cell phone",
+                "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors",
+                "teddy bear", "hair drier", "toothbrush"]
+
+
         if not cap.isOpened():
             print("Couldn't open Camera")
             return
@@ -80,6 +88,10 @@ class CameraThread(QtCore.QThread):
         while not self.stop_flag:
             ret, frame = cap.read()
             if ret:
+
+
+
+                
                 self.new_frame.emit(frame)
             else:
                 print("Failed to read from camera")
@@ -91,16 +103,15 @@ class CameraThread(QtCore.QThread):
         self.stop_flag = True
         self.wait()
 
-
 class MainWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('LiDAR and Camera Feed')
-        self.resize(1600, 800)
+        self.setWindowTitle('LiDAR, Camera Feed, and Histogram')
+        self.resize(1200, 900)
 
         # LiDAR plot setup
         self.lidar_plot_widget = pg.GraphicsLayoutWidget()
-        self.lidar_plot_widget.setFixedSize(800, 800)  # Set fixed size
+        self.lidar_plot_widget.setFixedSize(600, 450)  # Adjust size for grid layout
         self.lidar_plot = self.lidar_plot_widget.addPlot(title="LiDAR Points")
         self.lidar_plot.setAspectLocked(True)
         self.lidar_plot.setXRange(-500, 500)
@@ -109,7 +120,7 @@ class MainWindow(QtWidgets.QWidget):
 
         self.lines = []
         self.text_items = []
-        for _ in range(72):
+        for _ in range(36):
             line = pg.PlotDataItem([], [], pen=pg.mkPen(color=(0, 255, 0), width=2))
             self.lidar_plot.addItem(line)
             self.lines.append(line)
@@ -123,13 +134,28 @@ class MainWindow(QtWidgets.QWidget):
 
         # Camera label setup
         self.camera_label = QtWidgets.QLabel()
-        self.camera_label.setFixedSize(800, 800)  # Set fixed size
+        self.camera_label.setFixedSize(600, 450)  # Adjust size for grid layout
         self.camera_label.setScaledContents(True)  # Scale the image to fit the label
 
+        # Histogram plot setup
+        self.histogram_plot_widget = pg.GraphicsLayoutWidget()
+        self.histogram_plot_widget.setFixedSize(600, 450)  # Adjust size for grid layout
+        self.histogram_plot = self.histogram_plot_widget.addPlot(title="Distance Histogram")
+        self.histogram_plot.setLabel('bottom', 'Angle (degrees)')
+        self.histogram_plot.setLabel('left', 'Distance (cm)')
+        self.histogram_plot.setXRange(-60, 60)  # Set range for transformed angles
+        self.histogram_plot.setYRange(0, 10)   # Adjust range as necessary
+        self.histogram_plot.setMouseEnabled(x=False, y=True)
+        self.histogram_hist = pg.BarGraphItem(x=[], height=[], width=10, brush='b')
+        self.histogram_plot.addItem(self.histogram_hist)
+        self.histogram_line = self.histogram_plot.plot([], [], pen=pg.mkPen(color='b', width=2))
+
         # Layout setup
-        layout = QtWidgets.QHBoxLayout(self)
-        layout.addWidget(self.lidar_plot_widget)
-        layout.addWidget(self.camera_label)
+        layout = QtWidgets.QGridLayout(self)
+        layout.addWidget(self.lidar_plot_widget, 0, 0)  # Top-left
+        layout.addWidget(self.camera_label, 0, 1)  # Top-right
+        layout.addWidget(self.histogram_plot_widget, 1, 0)  # Bottom-left
+        # Bottom-right is empty for now
         layout.setSpacing(0)  # Remove spacing between widgets
         layout.setContentsMargins(0, 0, 0, 0)  # Remove layout margins
 
@@ -138,11 +164,12 @@ class MainWindow(QtWidgets.QWidget):
         # Thread setup
         self.lidar_thread = LidarThread(port="/dev/tty.usbserial-0001", baudrate=256000)
         self.lidar_thread.new_data.connect(self.update_lidar_plot)
+        self.lidar_thread.new_data.connect(self.update_histogram_plot)
         self.lidar_thread.start()
         
-        # self.camera_thread = CameraThread()
-        # self.camera_thread.new_frame.connect(self.update_camera_feed)
-        # self.camera_thread.start()
+        self.camera_thread = CameraThread()
+        self.camera_thread.new_frame.connect(self.update_camera_feed)
+        self.camera_thread.start()
 
     def add_fov_lines(self):
         fov_lines = []
@@ -155,54 +182,73 @@ class MainWindow(QtWidgets.QWidget):
             line = pg.PlotDataItem([0, x], [0, y], pen=pg.mkPen(color=(0, 0, 255), width=2))
             self.lidar_plot.addItem(line)
             fov_lines.append(line)
-
-        # Draw connecting line between endpoints of FOV lines
-        x1, y1 = 500 * sin(radians(51)), 500 * cos(radians(51))
-        x2, y2 = 500 * sin(radians(309)), 500 * cos(radians(309))
-        outline_line = pg.PlotDataItem([x1, x2], [y1, y2], pen=pg.mkPen(color=(0, 0, 255), width=2))
-        self.lidar_plot.addItem(outline_line)
-        fov_lines.append(outline_line)
-
         return fov_lines
 
     def update_lidar_plot(self, x, y, distances, angles):
         self.lidar_plot_data.setData(x, y)
 
-        for i in range(72):
-            angle_target = i * 5
-            mask = (angles >= angle_target - 2.5) & (angles < angle_target + 2.5)
+        for i in range(36):
+            angle_target = i * 10
+            mask = (angles >= angle_target - 5) & (angles < angle_target + 5)
             valid_distances = distances[mask]
             valid_x = x[mask]
             valid_y = y[mask]
-            
+
             if valid_distances.size > 0:
-                min_distance_idx = np.argmin(valid_distances) # finds the index of the minimum distance
-                min_distance = valid_distances[min_distance_idx] # finds the minimum distance
-                x_obj = valid_x[min_distance_idx]
-                y_obj = valid_y[min_distance_idx]
-                
-                self.lines[i].setData([0, x_obj], [0, y_obj])
-                self.text_items[i].setText(f'{min_distance:.2f} cm')
-                self.text_items[i].setPos(x_obj / 2, y_obj / 2)
+                distance = valid_distances[0]  # Use the first distance in the segment
+                x_obj = valid_x[0]
+                y_obj = valid_y[0]
+
+                if (angle_target < 51 or angle_target > 309):  # Only plot within the range <51 and >309
+                    self.lines[i].setData([0, x_obj], [0, y_obj])
+                    self.text_items[i].setText(f'{distance:.2f} cm')
+                    self.text_items[i].setPos(x_obj / 2, y_obj / 2)
+                else:
+                    self.lines[i].setData([], [])
+                    self.text_items[i].setText('')
             else:
                 self.lines[i].setData([], [])
                 self.text_items[i].setText('')
-                
+
+    def update_histogram_plot(self, x, y, distances, angles):
+        # Transform angles
+        transformed_angles = np.where(
+            angles > 309,
+            angles - 360,  # Map 310 to -50, 320 to -40, etc.
+            angles  # Angles < 51 stay as they are
+        )
+
+        # Filter angles and distances based on the transformed angles
+        filtered_mask = (angles > 309) | (angles < 51)
+        filtered_angles = transformed_angles[filtered_mask]
+        filtered_distances = distances[filtered_mask] / 2000
+
+        # Define histogram bins
+        bin_edges = np.arange(-180, 361, 10)  # Include negative values and positive values
+        hist, _ = np.histogram(filtered_angles, bins=bin_edges, weights=filtered_distances)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+        # Update histogram plot
+        self.histogram_hist.setOpts(x=bin_centers, height=hist)
+        self.histogram_plot.setXRange(-60, 60)  # Adjust x-axis range to include negative values
+
+        # Update histogram line plot
+        self.histogram_line.setData(bin_centers, hist)
 
     def update_camera_feed(self, frame):
-        frame = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
-        height, width, channel = frame.shape
-        bytes_per_line = 3 * width
-        q_image = QtGui.QImage(frame.data, width, height, bytes_per_line, QtGui.QImage.Format_RGB888)
-        self.camera_label.setPixmap(QtGui.QPixmap.fromImage(q_image))
+        rgb_image = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+        h, w, ch = rgb_image.shape
+        bytes_per_line = ch * w
+        qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+        self.camera_label.setPixmap(QtGui.QPixmap.fromImage(qt_image))
 
     def closeEvent(self, event):
         self.lidar_thread.stop()
         self.camera_thread.stop()
         event.accept()
 
-if __name__ == "__main__":
-    app = QtWidgets.QApplication([])
-    main_window = MainWindow()
-    main_window.show()
+if __name__ == '__main__':
+    app = QtWidgets.QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
     sys.exit(app.exec())
