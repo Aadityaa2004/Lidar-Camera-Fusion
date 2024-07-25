@@ -5,6 +5,7 @@ from lidar_thread import LidarThread
 from camera_thread import CameraThread
 from config import LIDAR_PORT, LIDAR_BAUDRATE
 import cv2 as cv
+from sklearn.cluster import DBSCAN
 
 class MainWindow(QtWidgets.QWidget):
     def __init__(self):
@@ -69,10 +70,12 @@ class MainWindow(QtWidgets.QWidget):
         self.lidar_thread = LidarThread(port=LIDAR_PORT, baudrate=LIDAR_BAUDRATE)
         self.lidar_thread.new_data.connect(self.update_lidar_plot)
         self.lidar_thread.new_data.connect(self.update_histogram_plot)
-        self.lidar_thread.start()
         
         self.camera_thread = CameraThread()
+        self.lidar_thread.new_data.connect(self.camera_thread.update_lidar_data)
         self.camera_thread.new_frame.connect(self.update_camera_feed)
+        
+        self.lidar_thread.start()
         self.camera_thread.start()
 
     def add_fov_lines(self, plot):
@@ -99,26 +102,53 @@ class MainWindow(QtWidgets.QWidget):
             else:
                 line.setData([], [])
                 self.text_items[i].setText('')
+        
 
+    # def find_clusters(self, x, y):
+    #     coords = np.vstack((x, y)).T
+    #     db = DBSCAN(eps=30, min_samples=5).fit(coords)
+    #     return db.labels_
+
+    def update_camera_feed(self, frame):
+        height, width, channel = frame.shape
+        bytes_per_line = 3 * width
+        qt_image = QtGui.QImage(frame.data, width, height, bytes_per_line, QtGui.QImage.Format_RGB888).rgbSwapped()
+        self.camera_label.setPixmap(QtGui.QPixmap.fromImage(qt_image))
+        
     def update_histogram_plot(self, x, y, distances, angles):
+        # Adjust angles to be in the range of -180 to 180 degrees
         transformed_angles = np.where(angles > 309, angles - 360, angles)
         filtered_mask = (angles > 309) | (angles < 51)
         filtered_angles = transformed_angles[filtered_mask]
         filtered_distances = distances[filtered_mask] / 2000
 
+        # Create histogram
         hist, bin_edges = np.histogram(filtered_angles, bins=np.arange(-180, 361, 10), weights=filtered_distances)
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
-        self.histogram_hist.setOpts(x=bin_centers, height=hist)
+        # Update the histogram plot
+        self.histogram_hist.setOpts(x=bin_centers, height=hist, width=5)
         self.histogram_line.setData(bin_centers, hist)
-
-    def update_camera_feed(self, frame):
-        rgb_image = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
-        h, w, ch = rgb_image.shape
-        qt_image = QtGui.QImage(rgb_image.data, w, h, ch * w, QtGui.QImage.Format_RGB888)
-        self.camera_label.setPixmap(QtGui.QPixmap.fromImage(qt_image))
 
     def closeEvent(self, event):
         self.lidar_thread.stop()
         self.camera_thread.stop()
         event.accept()
+
+if __name__ == '__main__':
+    app = QtWidgets.QApplication([])
+    window = MainWindow()
+    window.show()
+    app.exec()
+
+    # def update_histogram_plot(self, x, y, distances, angles):
+    #     transformed_angles = np.where(angles > 309, angles - 360, angles)
+    #     filtered_mask = (angles > 309) | (angles < 51)
+    #     filtered_angles = transformed_angles[filtered_mask]
+    #     filtered_distances = distances[filtered_mask] / 2000
+
+    #     hist, bin_edges = np.histogram(filtered_angles, bins=np.arange(-180, 361, 10), weights=filtered_distances)
+    #     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+    #     self.histogram_hist.setOpts(x=bin_centers, height=hist)
+    #     self.histogram_line.setData(bin_centers, hist)
