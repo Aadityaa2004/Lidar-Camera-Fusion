@@ -7,6 +7,7 @@ CAMERA_RESOLUTION_HEIGHT = 2592  # Camera resolution height in pixels
 CAMERA_FOCAL_LENGTH = 2.75  # Focal Length in mm
 CAMERA_SENSOR_WIDTH = 6.3  # Sensor Width in mm (example value, adjust if needed)
 CAMERA_SENSOR_HEIGHT = 3.53  # Sensor Height in mm (example value, adjust if needed)
+NUM_SEGMENTS = 36 # Number of segments
 
 # LiDAR Configuration
 LIDAR_PORT = "/dev/tty.usbserial-0001"
@@ -28,11 +29,3 @@ CLASS_NAMES = [
     "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors",
     "teddy bear", "hair drier", "toothbrush"
 ]
-
-# Number of Segments for LiDAR Data
-NUM_SEGMENTS = 36
-
-CAMERA_FOV_H = 102  # Horizontal Field of View in degrees
-CAMERA_RESOLUTION_WIDTH = 4608  # Camera resolution width in pixels
-CAMERA_RESOLUTION_HEIGHT = 2592  # Camera resolution height in pixels
-NUM_SEGMENTS = 36  # Number of segments
